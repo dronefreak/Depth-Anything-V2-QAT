@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision.transforms as T
 
 
 def apply_min_size(sample, size, image_interpolation_method=cv2.INTER_AREA):
@@ -277,4 +278,64 @@ class Crop(object):
         if "semseg_mask" in sample:
             sample["semseg_mask"] = sample["semseg_mask"][h_start:h_end, w_start:w_end]
 
+        return sample
+
+
+class RandomHorizontalFlip(object):
+    """Randomly horizontally flip image and targets with probability p."""
+
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, sample):
+        if np.random.rand() < self.p:
+            # Flip all key value pairs in sample dict.
+            sample["image"] = np.ascontiguousarray(np.fliplr(sample["image"]))
+
+            if "depth" in sample:
+                sample["depth"] = np.ascontiguousarray(np.fliplr(sample["depth"]))
+
+            if "mask" in sample:
+                sample["mask"] = np.ascontiguousarray(np.fliplr(sample["mask"]))
+
+            if "semseg_mask" in sample:
+                sample["semseg_mask"] = np.ascontiguousarray(
+                    np.fliplr(sample["semseg_mask"])
+                )
+            if "valid_mask" in sample:
+                sample["valid_mask"] = np.ascontiguousarray(
+                    np.fliplr(sample["valid_mask"])
+                )
+
+        return sample
+
+
+class ColorJitter(object):
+    """Apply color jitter to the image only (not depth/mask)."""
+
+    def __init__(self, brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1):
+        self.jitter = T.ColorJitter(brightness, contrast, saturation, hue)
+
+    def __call__(self, sample):
+        img = sample["image"]
+        # assume image is in HxWxC, uint8 or float32
+        img = torch.from_numpy(img.astype(np.uint8)).permute(2, 0, 1)  # to CxHxW
+        img = self.jitter(img)
+        img = img.permute(1, 2, 0).numpy()
+        sample["image"] = img
+        return sample
+
+
+class RandomGaussianBlur(object):
+    """Apply Gaussian blur with probability p."""
+
+    def __init__(self, p=0.3, kernel_size=3):
+        self.p = p
+        self.kernel_size = kernel_size
+
+    def __call__(self, sample):
+        if np.random.rand() < self.p:
+            sample["image"] = cv2.GaussianBlur(
+                sample["image"], (self.kernel_size, self.kernel_size), 0
+            )
         return sample

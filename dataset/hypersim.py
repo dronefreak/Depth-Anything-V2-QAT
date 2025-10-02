@@ -5,7 +5,14 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
-from dataset.transform import Crop, NormalizeImage, PrepareForNet, Resize
+from dataset.transform import (
+    ColorJitter,
+    Crop,
+    NormalizeImage,
+    PrepareForNet,
+    RandomHorizontalFlip,
+    Resize,
+)
 
 
 def hypersim_distance_to_depth(npyDistance):
@@ -56,6 +63,12 @@ class Hypersim(Dataset):
             ]
             + ([Crop(size[0])] if self.mode == "train" else [])
         )
+        self.train_augmentations = Compose(
+            [
+                RandomHorizontalFlip(p=0.5),
+                ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            ]
+        )
 
     def __getitem__(self, item):
         img_path = self.filelist[item].split(" ")[0]
@@ -67,6 +80,10 @@ class Hypersim(Dataset):
         depth_fd = h5py.File(depth_path, "r")
         distance_meters = np.array(depth_fd["dataset"])
         depth = hypersim_distance_to_depth(distance_meters)
+        # Apply data augmentations to training samples only.
+        if self.mode == "train":
+            sample = self.train_augmentations({"image": image, "depth": depth})
+            image, depth = sample["image"], sample["depth"]
 
         sample = self.transform({"image": image, "depth": depth})
 
