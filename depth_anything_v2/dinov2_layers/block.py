@@ -14,10 +14,11 @@ from typing import Any, Callable, Dict, List, Tuple
 import torch
 from torch import Tensor, nn
 
-from .attention import Attention, MemEffAttention
-from .drop_path import DropPath
-from .layer_scale import LayerScale
-from .mlp import Mlp
+from depth_anything_v2.dinov2_layers.attention import Attention, MemEffAttention
+from depth_anything_v2.dinov2_layers.drop_path import DropPath
+from depth_anything_v2.dinov2_layers.layer_scale import LayerScale
+from depth_anything_v2.dinov2_layers.mlp import Mlp
+from util.utils import RichConsoleManager
 
 logger = logging.getLogger("dinov2")
 
@@ -277,3 +278,14 @@ class NestedTensorBlock(Block):
             return self.forward_nested(x_or_x_list)
         else:
             raise AssertionError
+
+
+if __name__ == "__main__":
+    console = RichConsoleManager.get_console()
+    console.log("Testing DINOv2 Block")
+    block = Block(dim=768, num_heads=12, attn_class=MemEffAttention)
+    console.log(block)
+    sample = torch.randn(4, 196, 768).to(next(block.parameters()).device)
+    with torch.no_grad():
+        output = block(sample)
+    console.log(f"Output shape: {output.shape}")

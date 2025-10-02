@@ -4,9 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms import Compose
 
-from .dinov2 import DINOv2
-from .util.blocks import FeatureFusionBlock, _make_scratch
-from .util.transform import NormalizeImage, PrepareForNet, Resize
+from dataset.transform import NormalizeImage, PrepareForNet, Resize
+from depth_anything_v2.dinov2 import DINOv2
+from depth_anything_v2.dinov2_util.blocks import FeatureFusionBlock, _make_scratch
+from util.utils import RichConsoleManager
 
 
 def _make_fusion_block(features, use_bn, size=None):
@@ -256,3 +257,14 @@ class DepthAnythingV2(nn.Module):
         image = image.to(DEVICE)
 
         return image, (h, w)
+
+
+if __name__ == "__main__":
+    console = RichConsoleManager.get_console()
+    console.log("Testing Depth Anything V2 Model")
+    model = DepthAnythingV2(encoder="vitl", use_clstoken=True)
+    console.log(model)
+    sample = torch.randn(1, 3, 518, 518).to(next(model.parameters()).device)
+    with torch.no_grad():
+        output = model(sample)
+    console.log(f"Output shape: {output.shape}")

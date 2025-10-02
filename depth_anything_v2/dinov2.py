@@ -15,15 +15,15 @@ from typing import Callable, Sequence, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn.init import trunc_normal_
-import torch.utils.checkpoint
 
-from .dinov2_layers import (
+from depth_anything_v2.dinov2_layers import (
     MemEffAttention,
     Mlp,
     NestedTensorBlock as Block,
     PatchEmbed,
     SwiGLUFFNFused,
 )
+from util.utils import RichConsoleManager
 
 logger = logging.getLogger("dinov2")
 
@@ -462,3 +462,14 @@ def DINOv2(model_name):
         interpolate_antialias=False,
         interpolate_offset=0.1,
     )
+
+
+if __name__ == "__main__":
+    console = RichConsoleManager.get_console()
+    console.log("Testing DINOv2 Model")
+    model = DINOv2(model_name="vitl")
+    console.log(model)
+    sample = torch.randn(1, 3, 518, 518).to(next(model.parameters()).device)
+    with torch.no_grad():
+        output = model(sample)
+    console.log(f"Output shape: {output.shape}")

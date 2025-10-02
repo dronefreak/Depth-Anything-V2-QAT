@@ -10,7 +10,10 @@
 
 import logging
 
+import torch
 from torch import Tensor, nn
+
+from util.utils import RichConsoleManager
 
 logger = logging.getLogger("dinov2")
 
@@ -81,3 +84,14 @@ class MemEffAttention(Attention):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+
+if __name__ == "__main__":
+    console = RichConsoleManager.get_console()
+    console.log("Testing Attention Module")
+    attn = Attention(dim=768, num_heads=12)
+    console.log(attn)
+    sample = torch.randn(4, 196, 768).to(next(attn.parameters()).device)
+    with torch.no_grad():
+        output = attn(sample)
+    console.log(f"Output shape: {output.shape}")

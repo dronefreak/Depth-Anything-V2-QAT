@@ -13,6 +13,7 @@ from dataset.transform import (
     RandomHorizontalFlip,
     Resize,
 )
+from util.utils import RichConsoleManager
 
 
 def hypersim_distance_to_depth(npyDistance):
@@ -99,3 +100,35 @@ class Hypersim(Dataset):
 
     def __len__(self):
         return len(self.filelist)
+
+
+if __name__ == "__main__":
+    console = RichConsoleManager.get_console()
+    console.log("Testing Hypersim Dataset")
+    dataset_dict = {
+        "train": "dataset/splits/hypersim/train.txt",
+        "val": "dataset/splits/hypersim/val.txt",
+    }
+    for key, val in dataset_dict.items():
+        console.log(f"Loading {key} dataset from {val}")
+        dataset = Hypersim(
+            filelist_path=val,
+            mode=key,
+        )
+        console.print(f"{key} Dataset size: {len(dataset)}", style="info")
+        if len(dataset) == 0:
+            console.log(
+                "[danger]No data found! Please check the file paths.[/danger]",
+                style="danger",
+            )
+            exit(1)
+        else:
+            console.log("[info]Data loaded successfully![/info]")
+            sample = dataset[0]
+            console.print(f"Sample keys: {list(sample.keys())}", style="info")
+            console.print(f"Image shape: {sample['image'].shape}", style="info")
+            console.print(f"Depth shape: {sample['depth'].shape}", style="info")
+            console.print(
+                f"Valid mask shape: {sample['valid_mask'].shape}", style="info"
+            )
+            console.print(f"Image path: {sample['image_path']}", style="info")
