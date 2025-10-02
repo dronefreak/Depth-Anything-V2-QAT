@@ -1,5 +1,4 @@
 from pathlib import Path
-import random
 from typing import Dict
 
 import hydra
@@ -63,6 +62,7 @@ def create_dataloader(dataset, cfg: DictConfig, split: str):
         num_workers=cfg.dataset.num_workers,
         drop_last=(split == "train"),
         shuffle=(split == "train"),
+        persistent_workers=cfg.dataset.num_workers > 0,
     )
 
 
@@ -182,22 +182,31 @@ def create_progress_display():
     return progress
 
 
+def poly_lr_step(
+    optimizer, base_lr, iters, total_iters, power=0.9, multipliers=(1.0, 1.0)
+):
+    """Step-wise poly learning rate update for multiple param groups."""
+    lr = base_lr * (1 - iters / total_iters) ** power
+    optimizer.param_groups[0]["lr"] = lr * multipliers[0]
+    optimizer.param_groups[1]["lr"] = lr * multipliers[1]
+
+
 def train_one_epoch(
     scaler,
     model,
     trainloader,
     criterion,
     optimizer,
-    scheduler,
     epoch,
     cfg,
     device,
-    progress,
-    train_task_id,
+    progress=None,
+    train_task_id=None,
 ):
-    """Train for one epoch with Rich progress tracking."""
+    """Train for one epoch with AMP, Poly LR per step, and Rich progress tracking."""
     model.train()
     total_loss = 0.0
+    total_iters = cfg.training.epochs * len(trainloader)
 
     for i, sample in enumerate(trainloader):
         optimizer.zero_grad()
@@ -207,42 +216,49 @@ def train_one_epoch(
         depth = sample["depth"].to(device, non_blocking=True)
         valid_mask = sample["valid_mask"].to(device, non_blocking=True)
 
-        # Random horizontal flip augmentation
-        if random.random() < 0.5:
-            img = img.flip(-1)
-            depth = depth.flip(-1)
-            valid_mask = valid_mask.flip(-1)
+        # Forward pass with AMP
+        # with torch.amp.autocast(device_type=device.type, enabled=True):
+        pred = model(img)
+        valid_condition = (
+            (valid_mask == 1)
+            & (depth >= cfg.dataset.min_depth)
+            & (depth <= cfg.dataset.max_depth)
+        )
+        loss = criterion(pred, depth, valid_condition)
 
-        # Forward pass
-        with torch.amp.autocast(device_type=device.type, enabled=True):
-            pred = model(img)
+        # Backward pass and optimizer step
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
 
-            # Create valid mask for loss computation
-            valid_condition = (
-                (valid_mask == 1)
-                & (depth >= cfg.dataset.min_depth)
-                & (depth <= cfg.dataset.max_depth)
-            )
-            loss = criterion(pred, depth, valid_condition)
+        loss.backward()
+        optimizer.step()
 
-        # Backward pass
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        # Step-wise Poly LR update
+        iters = epoch * len(trainloader) + i
+        poly_lr_step(
+            optimizer,
+            base_lr=cfg.training.lr,
+            iters=iters,
+            total_iters=total_iters,
+            power=cfg.training.scheduler.power,
+            multipliers=(
+                cfg.training.lr_backbone_multiplier,
+                cfg.training.lr_head_multiplier,
+            ),
+        )
 
-        # Update learning rate
-        if scheduler:
-            scheduler.step()
-
+        # Accumulate loss
         total_loss += loss.item()
 
-        # Update progress bar
-        current_lr = optimizer.param_groups[0]["lr"]
-        progress.update(
-            train_task_id,
-            advance=1,
-            status=f"Loss: {loss.item():.4f} | LR: {current_lr:.2e}",
-        )
+        # Update progress bar if provided
+        if progress and train_task_id is not None:
+            current_lr = optimizer.param_groups[0]["lr"]
+            progress.update(
+                train_task_id,
+                advance=1,
+                status=f"Loss: {loss.item():.4f} | LR: {current_lr:.2e}",
+            )
 
     return total_loss / len(trainloader)
 
@@ -340,6 +356,7 @@ def save_checkpoint(model, optimizer, epoch, previous_best, cfg, filename="lates
         "model": model.state_dict(),  # Only model weights
         "epoch": epoch,
         "previous_best": previous_best,
+        "notes": cfg.training.notes,
         # Remove the config to avoid OmegaConf serialization issues
     }
     save_path = Path(cfg.training.save_path)
@@ -376,9 +393,6 @@ def main(cfg: DictConfig):
     criterion = SiLogLoss().to(device)
     optimizer = create_optimizer(model, cfg)
 
-    # Create learning rate scheduler
-    scheduler = None  # Using manual poly LR update
-
     # Initialize tracking variables
     previous_best = {
         "d1": 0,
@@ -404,7 +418,9 @@ def main(cfg: DictConfig):
         f"[cyan]Batch size: {cfg.dataset.train_batch_size}"
         f" | Workers: {cfg.dataset.num_workers}[/cyan]"
     )
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler(
+        device=device.type, enabled=True, init_scale=1024, growth_interval=2000
+    )
     for epoch in range(cfg.training.epochs):
         # Training progress bar
         console.print(
@@ -432,7 +448,6 @@ def main(cfg: DictConfig):
                 trainloader,
                 criterion,
                 optimizer,
-                scheduler,
                 epoch,
                 cfg,
                 device,

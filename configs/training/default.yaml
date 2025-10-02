@@ -11,3 +11,4 @@ save_path: ${hydra:run.dir}
 save_latest: true
 log_interval: 100
 torch_compile: true
+notes: ""
