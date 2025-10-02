@@ -1,0 +1,4 @@
+encoder: vitb
+features: 128
+out_channels: [96, 192, 384, 768]
+pretrained_from: null

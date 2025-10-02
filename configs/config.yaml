@@ -1,0 +1,20 @@
+defaults:
+  - _self_
+  - dataset: hypersim
+  - model: vits
+  - training: default
+  - quantization: qat
+  - eval: default
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+seed: 42
+device: cuda # or 'cpu', 'mps'
+distributed: false
+world_size: 1
+local_rank: 0

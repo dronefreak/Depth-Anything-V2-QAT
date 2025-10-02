@@ -1,0 +1,10 @@
+name: vkitti
+train_split: dataset/splits/vkitti2/train.txt
+val_split: dataset/splits/kitti/val.txt
+img_size: 518
+min_depth: 0.001
+max_depth: 20.0
+train_batch_size: 2
+val_batch_size: 1
+num_workers: 4
+pin_memory: true

@@ -1,0 +1,20 @@
+# Evaluation-specific configuration
+input:
+  path: ???
+  input_size: 518
+  batch_size: 1
+  num_workers: 4
+
+output:
+  dir: ./outputs/eval_results
+  save_visual: true
+  save_numpy: false
+  pred_only: false
+  grayscale: false
+  save_metrics: true
+
+eval:
+  compute_metrics: false # Set to true when evaluating on datasets with ground truth
+  min_depth: 0.001
+  max_depth: 20.0
+  use_cuda: true

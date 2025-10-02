@@ -1,0 +1,4 @@
+encoder: vitt
+features: 32
+out_channels: [24, 48, 96, 192]
+pretrained_from: null

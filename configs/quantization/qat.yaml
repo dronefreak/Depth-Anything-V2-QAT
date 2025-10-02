@@ -1,0 +1,12 @@
+enabled: false
+backend: "qnnpack" # or 'fbgemm'
+per_channel: true
+qconfig:
+  activation:
+    dtype: torch.quint8
+    qscheme: torch.per_tensor_affine
+  weight:
+    dtype: torch.qint8
+    qscheme: torch.per_channel_symmetric
+fake_quant: true
+quantize_on_fly: false
