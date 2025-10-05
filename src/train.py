@@ -206,7 +206,7 @@ def train_one_epoch(
     """Train for one epoch with AMP, Poly LR per step, and Rich progress tracking."""
     model.train()
     total_loss = 0.0
-    total_iters = cfg.training.epochs * len(trainloader)
+    # total_iters = cfg.training.epochs * len(trainloader)
 
     for i, sample in enumerate(trainloader):
         optimizer.zero_grad()
@@ -217,36 +217,36 @@ def train_one_epoch(
         valid_mask = sample["valid_mask"].to(device, non_blocking=True)
 
         # Forward pass with AMP
-        # with torch.amp.autocast(device_type=device.type, enabled=True):
-        pred = model(img)
-        valid_condition = (
-            (valid_mask == 1)
-            & (depth >= cfg.dataset.min_depth)
-            & (depth <= cfg.dataset.max_depth)
-        )
-        loss = criterion(pred, depth, valid_condition)
+        with torch.amp.autocast(device_type=device.type, enabled=True):
+            pred = model(img)
+            valid_condition = (
+                (valid_mask == 1)
+                & (depth >= cfg.dataset.min_depth)
+                & (depth <= cfg.dataset.max_depth)
+            )
+            loss = criterion(pred, depth, valid_condition)
 
         # Backward pass and optimizer step
-        # scaler.scale(loss).backward()
-        # scaler.step(optimizer)
-        # scaler.update()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
-        loss.backward()
-        optimizer.step()
+        # loss.backward()
+        # optimizer.step()
 
-        # Step-wise Poly LR update
-        iters = epoch * len(trainloader) + i
-        poly_lr_step(
-            optimizer,
-            base_lr=cfg.training.lr,
-            iters=iters,
-            total_iters=total_iters,
-            power=cfg.training.scheduler.power,
-            multipliers=(
-                cfg.training.lr_backbone_multiplier,
-                cfg.training.lr_head_multiplier,
-            ),
-        )
+        # # Step-wise Poly LR update
+        # iters = epoch * len(trainloader) + i
+        # poly_lr_step(
+        #     optimizer,
+        #     base_lr=cfg.training.lr,
+        #     iters=iters,
+        #     total_iters=total_iters,
+        #     power=cfg.training.scheduler.power,
+        #     multipliers=(
+        #         cfg.training.lr_backbone_multiplier,
+        #         cfg.training.lr_head_multiplier,
+        #     ),
+        # )
 
         # Accumulate loss
         total_loss += loss.item()
@@ -378,8 +378,6 @@ def main(cfg: DictConfig):
     device = setup_device(cfg)
     cudnn.enabled = True
     cudnn.benchmark = True
-
-    # logger.info(f"Using device: {device}")
 
     # Create datasets and dataloaders
     trainset = get_dataset(cfg, "train")

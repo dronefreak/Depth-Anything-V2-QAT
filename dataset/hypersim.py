@@ -5,8 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
-from dataset.transform import (
-    ColorJitter,
+from dataset.transform import (  # ColorJitter,
     Crop,
     NormalizeImage,
     PrepareForNet,
@@ -67,7 +66,8 @@ class Hypersim(Dataset):
         self.train_augmentations = Compose(
             [
                 RandomHorizontalFlip(p=0.5),
-                ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+                # This is too strong for depth estimation, results in loss of details
+                # ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
             ]
         )
 
