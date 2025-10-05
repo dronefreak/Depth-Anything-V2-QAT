@@ -22,11 +22,14 @@ from dataset.hypersim import Hypersim
 from dataset.kitti import KITTI
 from dataset.vkitti2 import VKITTI2
 from depth_anything_v2.dpt import DepthAnythingV2
+from quantization.qat_helper import (
+    _move_model_to_device_and_verify,
+    _warmup_model_for_tracing,
+    prepare_model_for_qat,
+)
 from util.loss import SiLogLoss
 from util.metric import eval_depth
 from util.utils import RichConsoleManager, set_random_seed
-
-# from quantization.qat_helper import prepare_model_for_qat, convert_model_to_quantized
 
 console = RichConsoleManager.get_console()
 
@@ -127,10 +130,29 @@ def create_model(cfg: DictConfig, device: torch.device):
     # Prepare for QAT if enabled
     if cfg.quantization.enabled:
         console.print("Preparing model for Quantization Aware Training", style="info")
-        # model = prepare_model_for_qat(model, cfg.quantization)
+        # keep on CPU for prepare_qat internals (observers)
+        model = model.to("cpu")
+        model = prepare_model_for_qat(model, cfg)
 
-    model = model.to(device)
-    return torch.compile(model) if cfg.training.torch_compile else model
+    # Move model to target device and verify
+    model = _move_model_to_device_and_verify(model, device)
+
+    # Warm up model to ensure runtime tensors are allocated on the correct device
+    # Use user-configured input size if available, else fallback
+    input_shape = getattr(cfg.dataset, "example_input_shape", (1, 3, 224, 224))
+    warmup_ok = _warmup_model_for_tracing(model, device, input_shape=input_shape)
+    if not warmup_ok:
+        console.print(
+            "[create_model] Warmup failed! "
+            "Proceeding but torch.compile may raise device errors.",
+            style="warning",
+        )
+
+    # Optionally compile after warmup
+    if cfg.training.torch_compile:
+        model = torch.compile(model)
+
+    return model
 
 
 def create_optimizer(model, cfg: DictConfig):
@@ -182,13 +204,13 @@ def create_progress_display():
     return progress
 
 
-def poly_lr_step(
-    optimizer, base_lr, iters, total_iters, power=0.9, multipliers=(1.0, 1.0)
-):
-    """Step-wise poly learning rate update for multiple param groups."""
-    lr = base_lr * (1 - iters / total_iters) ** power
-    optimizer.param_groups[0]["lr"] = lr * multipliers[0]
-    optimizer.param_groups[1]["lr"] = lr * multipliers[1]
+# def poly_lr_step(
+#     optimizer, base_lr, iters, total_iters, power=0.9, multipliers=(1.0, 1.0)
+# ):
+#     """Step-wise poly learning rate update for multiple param groups."""
+#     lr = base_lr * (1 - iters / total_iters) ** power
+#     optimizer.param_groups[0]["lr"] = lr * multipliers[0]
+#     optimizer.param_groups[1]["lr"] = lr * multipliers[1]
 
 
 def train_one_epoch(
@@ -216,20 +238,20 @@ def train_one_epoch(
         depth = sample["depth"].to(device, non_blocking=True)
         valid_mask = sample["valid_mask"].to(device, non_blocking=True)
 
-        # Forward pass with AMP
-        with torch.amp.autocast(device_type=device.type, enabled=True):
-            pred = model(img)
-            valid_condition = (
-                (valid_mask == 1)
-                & (depth >= cfg.dataset.min_depth)
-                & (depth <= cfg.dataset.max_depth)
-            )
-            loss = criterion(pred, depth, valid_condition)
+        # Forward pass with AMP (disabled for quantization-aware training)
+        # with torch.amp.autocast(device_type=device.type, enabled=True):
+        pred = model(img)
+        valid_condition = (
+            (valid_mask == 1)
+            & (depth >= cfg.dataset.min_depth)
+            & (depth <= cfg.dataset.max_depth)
+        )
+        loss = criterion(pred, depth, valid_condition)
 
         # Backward pass and optimizer step
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
 
         # loss.backward()
         # optimizer.step()
@@ -416,8 +438,12 @@ def main(cfg: DictConfig):
         f"[cyan]Batch size: {cfg.dataset.train_batch_size}"
         f" | Workers: {cfg.dataset.num_workers}[/cyan]"
     )
-    scaler = torch.amp.GradScaler(
-        device=device.type, enabled=True, init_scale=1024, growth_interval=2000
+    scaler = (
+        torch.amp.GradScaler(
+            device=device.type, enabled=True, init_scale=1024, growth_interval=2000
+        )
+        if not cfg.quantization.enabled
+        else None
     )
     for epoch in range(cfg.training.epochs):
         # Training progress bar
