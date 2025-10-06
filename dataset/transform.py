@@ -339,3 +339,15 @@ class RandomGaussianBlur(object):
                 sample["image"], (self.kernel_size, self.kernel_size), 0
             )
         return sample
+
+
+class RandomGrayscaleProb(object):
+    def __init__(self, p=0.15):
+        self.p = p
+
+    def __call__(self, sample):
+        if np.random.rand() < self.p:
+            img = sample["image"]
+            gray = np.dot(img[..., :3], [0.2989, 0.5870, 0.1140])
+            sample["image"] = np.stack([gray, gray, gray], -1)
+        return sample

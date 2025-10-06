@@ -5,10 +5,13 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
-from dataset.transform import (  # ColorJitter,
+from dataset.transform import (
+    ColorJitter,
     Crop,
     NormalizeImage,
     PrepareForNet,
+    RandomGaussianBlur,
+    RandomGrayscaleProb,
     RandomHorizontalFlip,
     Resize,
 )
@@ -38,12 +41,14 @@ def hypersim_distance_to_depth(npyDistance):
 
 
 class Hypersim(Dataset):
-    def __init__(self, filelist_path, mode, size=(518, 518)):
+    def __init__(self, cfg, mode, size=(518, 518)):
 
         self.mode = mode
         self.size = size
-
-        with open(filelist_path, "r") as f:
+        self.filelist_path = (
+            cfg.dataset.train_split if mode == "train" else cfg.dataset.val_split
+        )
+        with open(self.filelist_path, "r") as f:
             self.filelist = f.read().splitlines()
 
         net_w, net_h = size
@@ -65,9 +70,16 @@ class Hypersim(Dataset):
         )
         self.train_augmentations = Compose(
             [
-                RandomHorizontalFlip(p=0.5),
+                RandomHorizontalFlip(p=cfg.dataset.augmentations.horizontal_flip.p),
                 # This is too strong for depth estimation, results in loss of details
-                # ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+                ColorJitter(
+                    brightness=cfg.dataset.augmentations.color_jitter.brightness,
+                    contrast=cfg.dataset.augmentations.color_jitter.contrast,
+                    saturation=cfg.dataset.augmentations.color_jitter.saturation,
+                    hue=cfg.dataset.augmentations.color_jitter.hue,
+                ),
+                RandomGaussianBlur(p=cfg.dataset.augmentations.gaussian_blur.p),
+                RandomGrayscaleProb(p=cfg.dataset.augmentations.random_grayscale.p),
             ]
         )
 

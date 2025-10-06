@@ -8,3 +8,21 @@ train_batch_size: 2
 val_batch_size: 2
 num_workers: 4
 pin_memory: true
+augmentations:
+  horizontal_flip:
+    p: 0.5
+  random_grayscale:
+    p: 0.15
+    gaussian_blur:
+      p: 0.2
+  color_jitter:
+    brightness: 0.03
+    contrast: 0.03
+    saturation: 0.02
+    hue: 0.02
+  random_resize:
+    scales: [0.8, 1.0, 1.2]
+    mode: "bilinear"
+  random_crop:
+    height: 518
+    width: 518

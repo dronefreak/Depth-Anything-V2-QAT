@@ -146,7 +146,9 @@ def prepare_model_for_qat_selective(
     print(f"Using quantization backend: {backend}")
 
     # Observers: moving-average for activations, per-channel for weights (where allowed)
-    act_observer = MovingAverageMinMaxObserver.with_args(reduce_range=False)
+    act_observer = MovingAverageMinMaxObserver.with_args(
+        reduce_range=False, dtype=torch.qint32
+    )
     # Per-channel for weight (works for Conv2d, Linear)
     weight_perch = PerChannelMinMaxObserver.with_args(
         dtype=torch.qint8, qscheme=torch.per_channel_symmetric
