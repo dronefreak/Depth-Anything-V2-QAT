@@ -25,7 +25,7 @@ from depth_anything_v2.dpt import DepthAnythingV2
 from quantization.qat_helper import (
     _move_model_to_device_and_verify,
     _warmup_model_for_tracing,
-    prepare_model_for_qat,
+    prepare_model_for_qat_selective,
 )
 from util.loss import SiLogLoss
 from util.metric import eval_depth
@@ -132,7 +132,7 @@ def create_model(cfg: DictConfig, device: torch.device):
         console.print("Preparing model for Quantization Aware Training", style="info")
         # keep on CPU for prepare_qat internals (observers)
         model = model.to("cpu")
-        model = prepare_model_for_qat(model, cfg)
+        model = prepare_model_for_qat_selective(model, cfg)
 
     # Move model to target device and verify
     model = _move_model_to_device_and_verify(model, device)

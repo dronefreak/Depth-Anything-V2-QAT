@@ -2,16 +2,37 @@
 # Helper functions for Quantization Aware Training (QAT) using PyTorch's eager mode
 # Reference: https://pytorch.org/docs/stable/quantization.html#quantization-aware
 import functools
+from typing import Any
 
 from omegaconf import DictConfig
 import torch
 from torch.ao.quantization import (
     DeQuantStub,
+    MinMaxObserver,
+    MovingAverageMinMaxObserver,
+    PerChannelMinMaxObserver,
+    QConfig,
     QuantStub,
     convert,
-    get_default_qconfig,
     prepare_qat,
 )
+
+
+def _dequantize_output(module, out: Any):
+    """Recursively apply module.dequant to all Tensor elements in the output.
+
+    Keeps tuples, lists, and dicts structurally identical.
+    """
+    if torch.is_tensor(out):
+        return module.dequant(out)
+    elif isinstance(out, tuple):
+        return tuple(_dequantize_output(module, o) for o in out)
+    elif isinstance(out, list):
+        return [_dequantize_output(module, o) for o in out]
+    elif isinstance(out, dict):
+        return {k: _dequantize_output(module, v) for k, v in out.items()}
+    else:
+        return out
 
 
 def _move_model_to_device_and_verify(model: torch.nn.Module, device: torch.device):
@@ -100,6 +121,138 @@ def _add_quant_stubs(model):
     return model
 
 
+def prepare_model_for_qat_selective(
+    model: torch.nn.Module, cfg: DictConfig, target_submodules=("depth_head", "decoder")
+):
+    """
+    Prepare model for QAT selectively:
+      - Use per-channel weight observer for Conv2d/Linear where supported.
+      - Use per-tensor weight observer for ConvTranspose* modules
+        (unsupported for per-channel).
+      - Attach quant stubs at decoder entry/exit and
+        run prepare_qat on the decoder only.
+    `target_submodules` can be names of top-level modules
+     you want quantized (default: depth_head/decoder).
+    """
+
+    if not cfg.quantization.enabled:
+        return model
+
+    backend = cfg.quantization.backend
+    if backend not in ["qnnpack", "fbgemm"]:
+        raise ValueError(f"Unsupported backend: {backend}. Use 'qnnpack' or 'fbgemm'")
+
+    torch.backends.quantized.engine = backend
+    print(f"Using quantization backend: {backend}")
+
+    # Observers: moving-average for activations, per-channel for weights (where allowed)
+    act_observer = MovingAverageMinMaxObserver.with_args(reduce_range=False)
+    # Per-channel for weight (works for Conv2d, Linear)
+    weight_perch = PerChannelMinMaxObserver.with_args(
+        dtype=torch.qint8, qscheme=torch.per_channel_symmetric
+    )
+    # Fallback per-tensor observer for weight (works for all modules)
+    weight_pertensor = MinMaxObserver.with_args(
+        dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+    )
+
+    # QConfig variants
+    qconfig_per_channel = QConfig(activation=act_observer, weight=weight_perch)
+    qconfig_per_tensor = QConfig(activation=act_observer, weight=weight_pertensor)
+
+    # Helper: attach Quant/DeQuant only to the decoder(s) (so encoder stays FP32)
+    def _attach_decoder_qstubs(root_model, target_names):
+        for sub_name in target_names:
+            if hasattr(root_model, sub_name):
+                sub = getattr(root_model, sub_name)
+                # if already wrapped, skip
+                if not hasattr(sub, "quant") and not hasattr(sub, "dequant"):
+                    sub.quant = torch.ao.quantization.QuantStub()
+                    sub.dequant = torch.ao.quantization.DeQuantStub()
+                    # wrap forward safely
+                    if not hasattr(sub, "_original_forward"):
+                        sub._original_forward = sub.forward
+
+                        @functools.wraps(sub._original_forward)
+                        def forward_q(x, *args, **kwargs):
+                            # Determine device
+                            # (prefer model parameter device, fallback to input)
+                            try:
+                                device = next(root_model.parameters()).device
+                            except StopIteration:
+                                device = getattr(x, "device", torch.device("cpu"))
+
+                            # Move input to device if mismatched
+                            if torch.is_tensor(x) and str(x.device) != str(device):
+                                x = x.to(device)
+
+                            # Quantize -> forward -> dequantize recursively
+                            qx = sub.quant(x)
+                            out = sub._original_forward(qx, *args, **kwargs)
+                            out = _dequantize_output(sub, out)
+                            return out
+
+                        sub.forward = forward_q
+
+                        print(
+                            "Attached Quant/DeQuant stub and"
+                            f" wrapper to submodule: {sub_name}"
+                        )
+            else:
+                print(
+                    "[prepare_model_for_qat_selective]"
+                    f" root model has no attribute '{sub_name}', skipping."
+                )
+
+    # Attach stubs only to the decoder/heads you specified
+    _attach_decoder_qstubs(model, target_submodules)
+
+    # Assign qconfig selectively across modules:
+    # per-channel for Conv2d/Linear, per-tensor for ConvTranspose
+    conv_types_per_channel = (torch.nn.Conv2d, torch.nn.Linear)
+    convtranspose_types = (
+        torch.nn.ConvTranspose1d,
+        torch.nn.ConvTranspose2d,
+        torch.nn.ConvTranspose3d,
+    )
+
+    for name, module in model.named_modules():
+        # Only set qconfig for modules that are
+        # inside target_submodules (so encoder unaffected).
+        if not any(name == t or name.startswith(f"{t}.") for t in target_submodules):
+            # keep as default or None (no qconfig) to avoid quantizing encoder
+            module.qconfig = None
+            continue
+
+        # Module is inside the target area (decoder/head)
+        if isinstance(module, conv_types_per_channel):
+            module.qconfig = qconfig_per_channel
+        elif isinstance(module, convtranspose_types):
+            # ConvTranspose doesn't support per-channel weights yet; force per-tensor
+            module.qconfig = qconfig_per_tensor
+        else:
+            # For other modules (LayerNorm, GELU, etc.)
+            # leave None or use activation observer only
+            # If you want to enable activation observers for all, use:
+            # module.qconfig = QConfig(activation=act_observer, weight=weight_pertensor)
+            # But for safety, set None so they remain FP32.
+            module.qconfig = None
+
+    # Finally, call prepare_qat only on the submodules we targeted.
+    # If target_submodules has multiple entries, prepare each separately.
+    for sub_name in target_submodules:
+        if hasattr(model, sub_name):
+            submodule = getattr(model, sub_name)
+            try:
+                prepare_qat(submodule, inplace=True)
+                print(f"prepare_qat inplace called on {sub_name}")
+            except Exception as e:
+                print(f"Warning: prepare_qat failed on {sub_name}: {e}")
+
+    print("Selective QAT preparation complete.")
+    return model
+
+
 def prepare_model_for_qat(model, cfg: DictConfig):
     """Prepare model for QAT using eager mode (compatible with DINOv2's dynamic pos
     encoding)."""
@@ -118,7 +271,15 @@ def prepare_model_for_qat(model, cfg: DictConfig):
     model = _add_quant_stubs(model)
 
     # Configure QConfig
-    qconfig = get_default_qconfig(backend)
+    qconfig = QConfig(
+        activation=torch.ao.quantization.MovingAverageMinMaxObserver.with_args(
+            qscheme=torch.per_tensor_affine
+        ),
+        weight=torch.ao.quantization.PerChannelMinMaxObserver.with_args(
+            dtype=torch.qint8, qscheme=torch.per_channel_symmetric
+        ),
+    )
+    # qconfig = get_default_qconfig(backend)
     model.qconfig = qconfig
     print(f"QConfig set: {qconfig}")
 

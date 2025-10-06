@@ -72,12 +72,18 @@ class PatchEmbed(nn.Module):
         _, _, H, W = x.shape
         patch_H, patch_W = self.patch_size
 
+        # assert (
+        #     H % patch_H == 0
+        # ), f"Input image height {H} is not a multiple of patch height {patch_H}"
+        # assert (
+        #     W % patch_W == 0
+        # ), f"Input image width {W} is not a multiple of patch width: {patch_W}"
         assert (
-            H % patch_H == 0
-        ), f"Input image height {H} is not a multiple of patch height {patch_H}"
+            self.img_size[0] % patch_H == 0
+        ), "Image height must be divisible by patch height"
         assert (
-            W % patch_W == 0
-        ), f"Input image width {W} is not a multiple of patch width: {patch_W}"
+            self.img_size[1] % patch_W == 0
+        ), "Image width must be divisible by patch width"
 
         x = self.proj(x)  # B C H W
         H, W = x.size(2), x.size(3)
