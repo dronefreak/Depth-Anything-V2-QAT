@@ -40,9 +40,9 @@ def get_dataset(cfg: DictConfig, split: str):
 
     if cfg.dataset.name == "hypersim":
         if split == "train":
-            return Hypersim(cfg.dataset.train_split, split, size=size)
+            return Hypersim(cfg, split, size=size)
         else:
-            return Hypersim(cfg.dataset.val_split, split, size=size)
+            return Hypersim(cfg, split, size=size)
     elif cfg.dataset.name == "vkitti":
         if split == "train":
             return VKITTI2(cfg.dataset.train_split, split, size=size)
@@ -239,19 +239,19 @@ def train_one_epoch(
         valid_mask = sample["valid_mask"].to(device, non_blocking=True)
 
         # Forward pass with AMP (disabled for quantization-aware training)
-        # with torch.amp.autocast(device_type=device.type, enabled=True):
-        pred = model(img)
-        valid_condition = (
-            (valid_mask == 1)
-            & (depth >= cfg.dataset.min_depth)
-            & (depth <= cfg.dataset.max_depth)
-        )
-        loss = criterion(pred, depth, valid_condition)
+        with torch.amp.autocast(device_type=device.type, enabled=True):
+            pred = model(img)
+            valid_condition = (
+                (valid_mask == 1)
+                & (depth >= cfg.dataset.min_depth)
+                & (depth <= cfg.dataset.max_depth)
+            )
+            loss = criterion(pred, depth, valid_condition)
 
         # Backward pass and optimizer step
-        # scaler.scale(loss).backward()
-        # scaler.step(optimizer)
-        # scaler.update()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         # loss.backward()
         # optimizer.step()

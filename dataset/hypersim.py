@@ -46,7 +46,7 @@ class Hypersim(Dataset):
         self.mode = mode
         self.size = size
         self.filelist_path = (
-            cfg.dataset.train_split if mode == "train" else cfg.dataset.val_split
+            cfg.dataset.train_split if self.mode == "train" else cfg.dataset.val_split
         )
         with open(self.filelist_path, "r") as f:
             self.filelist = f.read().splitlines()

@@ -13,8 +13,8 @@ augmentations:
     p: 0.5
   random_grayscale:
     p: 0.15
-    gaussian_blur:
-      p: 0.2
+  gaussian_blur:
+    p: 0.2
   color_jitter:
     brightness: 0.03
     contrast: 0.03
