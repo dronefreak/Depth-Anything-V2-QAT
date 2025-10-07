@@ -27,7 +27,7 @@ from quantization.qat_helper import (
     _warmup_model_for_tracing,
     prepare_model_for_qat_selective,
 )
-from util.loss import SiLogLoss
+from util.loss import GradLoss, SiLogLoss
 from util.metric import eval_depth
 from util.utils import RichConsoleManager, set_random_seed
 
@@ -218,6 +218,7 @@ def train_one_epoch(
     model,
     trainloader,
     criterion,
+    criterion_grad,
     optimizer,
     epoch,
     cfg,
@@ -247,6 +248,8 @@ def train_one_epoch(
                 & (depth <= cfg.dataset.max_depth)
             )
             loss = criterion(pred, depth, valid_condition)
+            loss_grad = criterion_grad(pred, depth)
+            loss = loss + (0.5 * loss_grad)
 
         # Backward pass and optimizer step
         scaler.scale(loss).backward()
@@ -411,6 +414,7 @@ def main(cfg: DictConfig):
     # Create model, loss, and optimizer
     model = create_model(cfg, device)
     criterion = SiLogLoss().to(device)
+    criterion_grad = GradLoss(scales=[1.0, 0.5]).to(device)
     optimizer = create_optimizer(model, cfg)
 
     # Initialize tracking variables
@@ -471,6 +475,7 @@ def main(cfg: DictConfig):
                 model,
                 trainloader,
                 criterion,
+                criterion_grad,
                 optimizer,
                 epoch,
                 cfg,

@@ -12,13 +12,13 @@ augmentations:
   horizontal_flip:
     p: 0.5
   random_grayscale:
-    p: 0.15
+    p: 0.0
   gaussian_blur:
-    p: 0.2
+    p: 0.0
   color_jitter:
-    brightness: 0.03
-    contrast: 0.03
-    saturation: 0.02
+    brightness: 0.0
+    contrast: 0.0
+    saturation: 0.0
     hue: 0.02
   random_resize:
     scales: [0.8, 1.0, 1.2]

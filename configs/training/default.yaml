@@ -12,3 +12,9 @@ save_latest: true
 log_interval: 100
 torch_compile: true
 notes: ""
+loss:
+  weights:
+    silog: 1.0
+    ssim: 0.0
+    grad: 0.5
+    l1_photo: 0.0
