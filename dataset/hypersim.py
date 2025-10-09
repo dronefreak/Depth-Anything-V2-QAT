@@ -6,12 +6,9 @@ from torch.utils.data import Dataset
 from torchvision.transforms import Compose
 
 from dataset.transform import (
-    ColorJitter,
     Crop,
     NormalizeImage,
     PrepareForNet,
-    RandomGaussianBlur,
-    RandomGrayscaleProb,
     RandomHorizontalFlip,
     Resize,
 )
@@ -72,14 +69,14 @@ class Hypersim(Dataset):
             [
                 RandomHorizontalFlip(p=cfg.dataset.augmentations.horizontal_flip.p),
                 # This is too strong for depth estimation, results in loss of details
-                ColorJitter(
-                    brightness=cfg.dataset.augmentations.color_jitter.brightness,
-                    contrast=cfg.dataset.augmentations.color_jitter.contrast,
-                    saturation=cfg.dataset.augmentations.color_jitter.saturation,
-                    hue=cfg.dataset.augmentations.color_jitter.hue,
-                ),
-                RandomGaussianBlur(p=cfg.dataset.augmentations.gaussian_blur.p),
-                RandomGrayscaleProb(p=cfg.dataset.augmentations.random_grayscale.p),
+                # ColorJitter(
+                # brightness=cfg.dataset.augmentations.color_jitter.brightness,
+                # contrast=cfg.dataset.augmentations.color_jitter.contrast,
+                # saturation=cfg.dataset.augmentations.color_jitter.saturation,
+                # hue=cfg.dataset.augmentations.color_jitter.hue,
+                # ),
+                # RandomGaussianBlur(p=cfg.dataset.augmentations.gaussian_blur.p),
+                # RandomGrayscaleProb(p=cfg.dataset.augmentations.random_grayscale.p),
             ]
         )
 

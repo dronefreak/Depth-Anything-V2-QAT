@@ -1,6 +1,7 @@
 # Evaluation-specific configuration
 input:
   path: ???
+  data_dir: ???
   input_size: 518
   batch_size: 1
   num_workers: 4

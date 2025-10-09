@@ -1,6 +1,7 @@
 from pytorch_msssim import ssim
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class SiLogLoss(nn.Module):
@@ -16,6 +17,17 @@ class SiLogLoss(nn.Module):
         )
 
         return loss
+
+
+# ----------------------
+# Gradient helpers
+# ----------------------
+def gradient_x(img):
+    return img[:, :, :-1] - img[:, :, 1:]
+
+
+def gradient_y(img):
+    return img[:, :-1, :] - img[:, 1:, :]
 
 
 class GradLoss(nn.Module):
@@ -35,6 +47,37 @@ class GradLoss(nn.Module):
             torch.abs(dx_pred - dx_tgt).mean() + torch.abs(dy_pred - dy_tgt).mean()
         )
         return grad_loss
+
+
+# ----------------------
+# Multi-scale gradient loss with pooling (no interpolate)
+# ----------------------
+class MultiScaleGradientLoss(torch.nn.Module):
+    def __init__(self, scales=[1.0, 0.5, 0.25, 0.125]):
+        super().__init__()
+        self.scales = scales
+
+    def forward(self, pred, target):
+        loss = 0.0
+
+        for s in self.scales:
+            if s == 1.0:
+                pred_s, target_s = pred, target
+            else:
+                # Pooling to downsample instead of interpolate
+                k = int(1 / s)
+                pred_s = F.avg_pool2d(
+                    pred.unsqueeze(1), kernel_size=k, stride=k
+                ).squeeze(1)
+                target_s = F.avg_pool2d(
+                    target.unsqueeze(1), kernel_size=k, stride=k
+                ).squeeze(1)
+
+            dx_loss = (gradient_x(pred_s) - gradient_x(target_s)).abs().mean()
+            dy_loss = (gradient_y(pred_s) - gradient_y(target_s)).abs().mean()
+            loss += dx_loss + dy_loss
+
+        return loss / len(self.scales)
 
 
 # -------------------------------

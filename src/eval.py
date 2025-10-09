@@ -28,6 +28,18 @@ from util.utils import RichConsoleManager
 console = RichConsoleManager.get_console()
 
 
+def clean_state_dict(state_dict):
+    # Remove possible compile / DDP / orig_mod wrappers
+    new_sd = {}
+    for k, v in state_dict.items():
+        if k.startswith("_orig_mod."):
+            k = k[len("_orig_mod.") :]
+        elif k.startswith("module."):
+            k = k[len("module.") :]
+        new_sd[k] = v
+    return new_sd
+
+
 def get_model(cfg: DictConfig, device: torch.device):
     """Load and configure the model."""
     model_config = {
@@ -67,6 +79,7 @@ def get_model(cfg: DictConfig, device: torch.device):
         # Fallback: assume it's already a state dict
         state_dict = checkpoint
 
+    state_dict = clean_state_dict(state_dict)
     model.load_state_dict(state_dict, strict=True)
     model = model.to(device).eval()
     return model
@@ -245,7 +258,7 @@ def get_dataset_for_eval(cfg: DictConfig):
     size = (cfg.eval.input.input_size, cfg.eval.input.input_size)
 
     if dataset_name == "hypersim":
-        valset = Hypersim(val_split, "val", size=size)
+        valset = Hypersim(cfg, "val", size=size)
     elif dataset_name == "vkitti":
         valset = KITTI(val_split, "val", size=size)
     else:
@@ -279,117 +292,113 @@ def main(cfg: DictConfig):
     model = get_model(cfg, device)
 
     # Check if we should evaluate on dataset with ground truth
-    if cfg.eval.eval.compute_metrics:
-        console.print(
-            "[bold yellow]Computing metrics on validation dataset...[/bold yellow]"
-        )
+    console.print(
+        "[bold yellow]Computing metrics on validation dataset...[/bold yellow]"
+    )
 
-        valset = get_dataset_for_eval(cfg)
-        valloader = DataLoader(
-            valset,
-            batch_size=cfg.eval.input.batch_size,  # Fixed: was cfg.input.batch_size
-            num_workers=cfg.eval.input.num_workers,  # Fixed: was cfg.input.num_workers
-            pin_memory=True,
-        )
+    valset = get_dataset_for_eval(cfg)
+    valloader = DataLoader(
+        valset,
+        batch_size=cfg.eval.input.batch_size,  # Fixed: was cfg.input.batch_size
+        num_workers=cfg.eval.input.num_workers,  # Fixed: was cfg.input.num_workers
+        pin_memory=True,
+    )
 
-        results, nsamples = evaluate_on_dataset(model, valloader, cfg, device)
+    results, nsamples = evaluate_on_dataset(model, valloader, cfg, device)
 
-        if results is not None:
-            # Display results table
-            table = Table(title="Evaluation Metrics")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
+    if results is not None:
+        # Display results table
+        table = Table(title="Evaluation Metrics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="magenta")
 
-            for metric, value in results.items():
-                table.add_row(metric, f"{value:.3f}")
+        for metric, value in results.items():
+            table.add_row(metric, f"{value:.3f}")
 
-            console.print(table, style="info")
+        console.print(table, style="info")
 
-            # Save metrics to file
-            if cfg.eval.output.save_metrics:  # Fixed: was cfg.output.save_metrics
-                metrics_file = output_dir / "metrics.yaml"
-                OmegaConf.save(results, metrics_file)
-                console.print(f"[green]Metrics saved to: {metrics_file}[/green]")
+        # Save metrics to file
+        if cfg.eval.output.save_metrics:  # Fixed: was cfg.output.save_metrics
+            metrics_file = output_dir / "metrics.yaml"
+            OmegaConf.save(results, metrics_file)
+            console.print(f"[green]Metrics saved to: {metrics_file}[/green]")
 
-        console.print(
-            "[bold green]Evaluation completed!"
-            f" Processed {nsamples} samples.[/bold green]"
-        )
+    console.print(
+        "[bold green]Evaluation completed!"
+        f" Processed {nsamples} samples.[/bold green]"
+    )
 
-    else:
-        # Single image or directory inference
-        console.print("[bold yellow]Running inference on input images...[/bold yellow]")
+    # Single image or directory inference
+    console.print("[bold yellow]Running inference on input images...[/bold yellow]")
 
-        input_files = get_input_files(cfg.eval.input.path)  # Fixed: was cfg.input.path
-        console.print(f"Found {len(input_files)} input files")
+    input_files = get_input_files(cfg.eval.input.data_dir)  # Fixed: was cfg.input.path
+    console.print(f"Found {len(input_files)} input files")
 
-        if not input_files:
-            console.print("[red]No input files found![/red]")
-            return
+    if not input_files:
+        console.print("[red]No input files found![/red]")
+        return
 
-        progress = Progress(
-            SpinnerColumn(),
-            BarColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            console=console,
-        )
+    progress = Progress(
+        SpinnerColumn(),
+        BarColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    )
 
-        with progress:
-            task = progress.add_task("Processing images", total=len(input_files))
+    with progress:
+        task = progress.add_task("Processing images", total=len(input_files))
 
-            for k, filename in enumerate(input_files):
-                progress.update(task, description=f"Processing: {Path(filename).name}")
+        for k, filename in enumerate(input_files):
+            progress.update(task, description=f"Processing: {Path(filename).name}")
 
-                try:
-                    raw_image = cv2.imread(filename)
-                    if raw_image is None:
-                        console.print(f"[red]Failed to load image: {filename}[/red]")
-                        continue
-
-                    # Run inference
-                    depth = infer_single_image(
-                        model, raw_image, cfg.eval.input.input_size, device
-                    )  # Fixed: was cfg.input.input_size
-
-                    # Save raw numpy if requested
-                    if cfg.eval.output.save_numpy:  # Fixed: was cfg.output.save_numpy
-                        output_path = (
-                            output_dir / f"{Path(filename).stem}_raw_depth_meter.npy"
-                        )
-                        np.save(output_path, depth)
-
-                    # Normalize depth for visualization
-                    depth_vis = (
-                        (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-                    )
-                    depth_vis = depth_vis.astype(np.uint8)
-
-                    # Apply colormap
-                    depth_colored = apply_colormap(
-                        depth_vis, cfg.eval.output.grayscale
-                    )  # Fixed: was cfg.output.grayscale
-
-                    # Save visualization
-                    output_path = output_dir / f"{Path(filename).stem}.png"
-                    save_visualization(
-                        raw_image,
-                        depth_colored,
-                        str(output_path),
-                        cfg.eval.output.pred_only,
-                    )  # Fixed: was cfg.output.pred_only
-
-                except Exception as e:
-                    console.print(f"[red]Error processing {filename}: {e}[/red]")
+            try:
+                raw_image = cv2.imread(filename)
+                if raw_image is None:
+                    console.print(f"[red]Failed to load image: {filename}[/red]")
                     continue
 
-                progress.update(task, advance=1)
+                # Run inference
+                depth = infer_single_image(
+                    model, raw_image, cfg.eval.input.input_size, device
+                )  # Fixed: was cfg.input.input_size
 
-        console.print(
-            "[bold green]Inference completed!"
-            f" Results saved to: {output_dir}[/bold green]"
-        )
+                # Save raw numpy if requested
+                if cfg.eval.output.save_numpy:  # Fixed: was cfg.output.save_numpy
+                    output_path = (
+                        output_dir / f"{Path(filename).stem}_raw_depth_meter.npy"
+                    )
+                    np.save(output_path, depth)
+
+                # Normalize depth for visualization
+                depth_vis = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+                depth_vis = depth_vis.astype(np.uint8)
+
+                # Apply colormap
+                depth_colored = apply_colormap(
+                    depth_vis, cfg.eval.output.grayscale
+                )  # Fixed: was cfg.output.grayscale
+
+                # Save visualization
+                output_path = output_dir / f"{Path(filename).stem}.png"
+                save_visualization(
+                    raw_image,
+                    depth_colored,
+                    str(output_path),
+                    cfg.eval.output.pred_only,
+                )  # Fixed: was cfg.output.pred_only
+
+            except Exception as e:
+                console.print(f"[red]Error processing {filename}: {e}[/red]")
+                continue
+
+            progress.update(task, advance=1)
+
+    console.print(
+        "[bold green]Inference completed!"
+        f" Results saved to: {output_dir}[/bold green]"
+    )
 
 
 if __name__ == "__main__":

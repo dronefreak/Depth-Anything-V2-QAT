@@ -27,7 +27,7 @@ from quantization.qat_helper import (
     _warmup_model_for_tracing,
     prepare_model_for_qat_selective,
 )
-from util.loss import GradLoss, SiLogLoss
+from util.loss import MultiScaleGradientLoss, SiLogLoss
 from util.metric import eval_depth
 from util.utils import RichConsoleManager, set_random_seed
 
@@ -414,7 +414,7 @@ def main(cfg: DictConfig):
     # Create model, loss, and optimizer
     model = create_model(cfg, device)
     criterion = SiLogLoss().to(device)
-    criterion_grad = GradLoss(scales=[1.0, 0.5]).to(device)
+    criterion_grad = MultiScaleGradientLoss(scales=[1.0, 0.5]).to(device)
     optimizer = create_optimizer(model, cfg)
 
     # Initialize tracking variables
@@ -528,11 +528,36 @@ def main(cfg: DictConfig):
                 console.print("[yellow]No improvement in metrics this epoch[/yellow]")
 
             # Save checkpoint
+            # Determine if primary metric improved (before updating previous_best)
+            primary_metric = "d1"
+            is_best = results[primary_metric] > previous_best[primary_metric]
+
+            # Update best metrics
+            improved_metrics = []
+            for k in results.keys():
+                if k in ["d1", "d2", "d3"]:
+                    if results[k] > previous_best[k]:
+                        previous_best[k] = results[k]
+                        improved_metrics.append(f"{k}: {results[k]:.3f} ↑")
+                else:
+                    if results[k] < previous_best[k]:
+                        previous_best[k] = results[k]
+                        improved_metrics.append(f"{k}: {results[k]:.3f} ↓")
+
+            # Save checkpoints
             if cfg.training.save_latest:
-                save_checkpoint(model, optimizer, epoch, previous_best, cfg)
+                save_checkpoint(
+                    model, optimizer, epoch, previous_best, cfg, filename="latest.pth"
+                )
+                console.print("[bold cyan]Latest checkpoint saved[/bold cyan]")
+
+            if is_best:
+                save_checkpoint(
+                    model, optimizer, epoch, previous_best, cfg, filename="best.pth"
+                )
                 console.print(
-                    f"[bold cyan]Checkpoint saved to"
-                    f" {cfg.training.save_path}[/bold cyan]"
+                    f"[bold green]New best model saved! ({primary_metric}:"
+                    f" {results[primary_metric]:.3f})[/bold green]"
                 )
 
         # Update learning rate (poly schedule)
